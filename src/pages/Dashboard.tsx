@@ -2,6 +2,10 @@ import { StatsCard } from "@/components/dashboard/StatsCard"
 import { JobCard } from "@/components/jobs/JobCard"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { useAppStore } from "@/store/appStore"
+import { aiMatchingService } from "@/services/aiMatchingService"
+import { jobDiscoveryService } from "@/services/jobDiscoveryService"
+import { useEffect, useMemo } from "react"
 import { 
   FileText, 
   Send, 
@@ -17,48 +21,128 @@ import { useToast } from "@/hooks/use-toast"
 
 export default function Dashboard() {
   const { toast } = useToast()
+  const { 
+    profile, 
+    jobs, 
+    applications, 
+    addApplication, 
+    updateJob,
+    addJobs,
+    isSearching,
+    setIsSearching 
+  } = useAppStore()
 
-  const mockJobs = [
-    {
-      id: "1",
-      title: "Senior Frontend Developer",
-      company: "TechCorp",
-      location: "Remote",
-      type: "Full-time",
-      salary: "$120k - $150k",
-      postedDate: "2 days ago",
-      description: "We're looking for a Senior Frontend Developer to join our team...",
-      matchScore: 95,
-      skills: ["React", "TypeScript", "Tailwind CSS", "Next.js"],
-      applied: false
-    },
-    {
-      id: "2", 
-      title: "Full Stack Engineer",
-      company: "StartupX",
-      location: "San Francisco, CA",
-      type: "Full-time",
-      salary: "$140k - $180k",
-      postedDate: "1 day ago",
-      description: "Join our fast-growing startup as a Full Stack Engineer...",
-      matchScore: 87,
-      skills: ["Node.js", "React", "PostgreSQL", "AWS"],
-      applied: true
+  // Get top job matches using AI
+  const topMatches = useMemo(() => {
+    if (!profile || jobs.length === 0) return []
+    return aiMatchingService.generateRecommendations(profile, jobs, 3)
+  }, [profile, jobs])
+
+  // Calculate statistics
+  const stats = useMemo(() => {
+    const totalApplications = applications.length
+    const responses = applications.filter(app => app.responses.length > 0).length
+    const interviews = applications.filter(app => 
+      app.status === 'interview' || 
+      app.responses.some(r => r.type === 'interview')
+    ).length
+    const successRate = totalApplications > 0 ? Math.round((responses / totalApplications) * 100) : 0
+
+    return {
+      applications: totalApplications,
+      responses,
+      interviews,
+      successRate
     }
-  ]
+  }, [applications])
 
-  const handleApply = (jobId: string) => {
+  // Auto-discover jobs on load if profile exists
+  useEffect(() => {
+    if (profile && jobs.length === 0 && !isSearching) {
+      discoverJobs()
+    }
+  }, [profile])
+
+  const discoverJobs = async () => {
+    if (!profile) {
+      toast({
+        title: "Profile Required",
+        description: "Please upload your resume first to discover relevant jobs.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsSearching(true)
+    try {
+      const result = await jobDiscoveryService.searchJobs({
+        query: profile.preferredRoles?.[0] || profile.skills?.[0] || 'developer',
+        location: profile.preferredLocations?.[0] || 'remote',
+        skills: profile.skills.slice(0, 3),
+        limit: 20
+      })
+
+      if (result.jobs.length > 0) {
+        addJobs(result.jobs)
+        toast({
+          title: "Jobs Discovered!",
+          description: `Found ${result.jobs.length} relevant opportunities from ${result.source}`,
+        })
+      } else {
+        toast({
+          title: "No Jobs Found",
+          description: "Try updating your skills or location preferences.",
+          variant: "destructive"
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Discovery Failed",
+        description: "Unable to search for jobs. Please try again later.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  const handleApply = async (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId)
+    if (!job || !profile) return
+
+    // Generate application
+    const coverLetter = aiMatchingService.generateCoverLetter(profile, job)
+    
+    // Add to applications
+    addApplication({
+      jobId: job.id,
+      jobTitle: job.title,
+      company: job.company,
+      appliedAt: new Date(),
+      status: 'applied',
+      coverLetter,
+      responses: []
+    })
+
+    // Update job status
+    updateJob(jobId, { applied: true, appliedAt: new Date() })
+
     toast({
       title: "Application Submitted!",
-      description: "Your tailored application has been sent successfully.",
+      description: `Your tailored application to ${job.company} has been submitted.`,
     })
   }
 
   const handleViewDetails = (jobId: string) => {
-    toast({
-      title: "Job Details",
-      description: "Opening detailed job information...",
-    })
+    const job = jobs.find(j => j.id === jobId)
+    if (job?.url) {
+      window.open(job.url, '_blank')
+    } else {
+      toast({
+        title: "Job Details",
+        description: "Opening detailed job information...",
+      })
+    }
   }
 
   return (
@@ -75,9 +159,9 @@ export default function Dashboard() {
               Your intelligent job application assistant. We automatically discover, match, and apply to jobs that fit your profile.
             </p>
             <div className="flex gap-4">
-              <Button variant="hero" size="lg" className="shadow-glow">
+              <Button variant="hero" size="lg" className="shadow-glow" onClick={discoverJobs} disabled={isSearching}>
                 <Plus className="w-5 h-5" />
-                Upload Resume
+                {isSearching ? 'Discovering Jobs...' : 'Discover Jobs'}
               </Button>
               <Button variant="outline" size="lg">
                 <Target className="w-5 h-5" />
@@ -94,31 +178,31 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatsCard
           title="Applications Sent"
-          value="24"
-          change="+12%"
+          value={stats.applications.toString()}
+          change={stats.applications > 0 ? "+12%" : "0%"}
           icon={Send}
           trend="up"
         />
         <StatsCard
           title="Responses Received"
-          value="8"
-          change="+25%"
+          value={stats.responses.toString()}
+          change={stats.responses > 0 ? "+25%" : "0%"}
           icon={FileText}
           trend="up"
         />
         <StatsCard
           title="Interview Requests"
-          value="3"
-          change="+50%"
+          value={stats.interviews.toString()}
+          change={stats.interviews > 0 ? "+50%" : "0%"}
           icon={Users}
           trend="up"
         />
         <StatsCard
           title="Success Rate"
-          value="33%"
-          change="+8%"
+          value={`${stats.successRate}%`}
+          change={stats.successRate > 0 ? "+8%" : "0%"}
           icon={TrendingUp}
-          trend="up"
+          trend={stats.successRate > 0 ? "up" : "neutral"}
         />
       </div>
 
@@ -134,14 +218,33 @@ export default function Dashboard() {
           </div>
           
           <div className="space-y-4">
-            {mockJobs.map((job) => (
-              <JobCard
-                key={job.id}
-                job={job}
-                onApply={handleApply}
-                onViewDetails={handleViewDetails}
-              />
-            ))}
+            {topMatches.length > 0 ? (
+              topMatches.map((job) => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  onApply={handleApply}
+                  onViewDetails={handleViewDetails}
+                />
+              ))
+            ) : (
+              <Card className="p-8 text-center bg-gradient-card">
+                <div className="space-y-4">
+                  <Target className="w-12 h-12 mx-auto text-muted-foreground" />
+                  <div>
+                    <h3 className="text-lg font-medium">No Job Matches Yet</h3>
+                    <p className="text-muted-foreground">
+                      {!profile ? 'Upload your resume to get personalized job recommendations' : 'Click "Discover Jobs" to find relevant opportunities'}
+                    </p>
+                  </div>
+                  {profile && (
+                    <Button onClick={discoverJobs} disabled={isSearching}>
+                      {isSearching ? 'Searching...' : 'Discover Jobs'}
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            )}
           </div>
         </div>
 

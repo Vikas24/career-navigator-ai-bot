@@ -22,16 +22,17 @@ interface JobCardProps {
     salary?: string
     postedDate: string
     description: string
-    matchScore: number
+    matchScore?: number
     skills: string[]
     applied?: boolean
+    appliedAt?: Date
   }
   onApply?: (jobId: string) => void
   onViewDetails?: (jobId: string) => void
 }
 
 export function JobCard({ job, onApply, onViewDetails }: JobCardProps) {
-  const getMatchColor = (score: number) => {
+  const getMatchColor = (score: number = 0) => {
     if (score >= 90) return "text-success border-success/20 bg-success/10"
     if (score >= 70) return "text-warning border-warning/20 bg-warning/10" 
     return "text-muted-foreground border-border bg-muted/50"
@@ -64,10 +65,10 @@ export function JobCard({ job, onApply, onViewDetails }: JobCardProps) {
           
           <div className={cn(
             "px-2 py-1 rounded-lg border text-xs font-medium flex items-center gap-1",
-            getMatchColor(job.matchScore)
+            getMatchColor(job.matchScore || 0)
           )}>
             <Star className="w-3 h-3" />
-            <span>{job.matchScore}% match</span>
+            <span>{job.matchScore || 0}% match</span>
           </div>
         </div>
 

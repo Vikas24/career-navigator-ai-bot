@@ -3,6 +3,8 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useToast } from "@/hooks/use-toast"
+import { resumeParsingService } from "@/services/resumeParsingService"
+import { useAppStore } from "@/store/appStore"
 import { 
   Upload, 
   FileText, 
@@ -24,6 +26,7 @@ export function ResumeUpload({ onUploadSuccess }: ResumeUploadProps) {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [analysisResult, setAnalysisResult] = useState<any>(null)
   const { toast } = useToast()
+  const { profile, setProfile, updateProfile } = useAppStore()
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -54,7 +57,7 @@ export function ResumeUpload({ onUploadSuccess }: ResumeUploadProps) {
   }
 
   const handleFileUpload = async (file: File) => {
-    if (!file.type.includes('pdf') && !file.type.includes('doc')) {
+    if (!file.type.includes('pdf') && !file.type.includes('doc') && !file.name.match(/\.(pdf|doc|docx)$/i)) {
       toast({
         title: "Invalid file type",
         description: "Please upload a PDF or Word document",
@@ -67,51 +70,66 @@ export function ResumeUpload({ onUploadSuccess }: ResumeUploadProps) {
     setUploadedFile(file)
     setProgress(0)
 
-    // Simulate upload progress
-    const progressInterval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 90) {
-          clearInterval(progressInterval)
-          return 90
-        }
-        return prev + 10
-      })
-    }, 200)
-
     try {
-      // Simulate AI processing
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      console.log('Starting file upload and parsing...')
       
-      // Mock analysis result
-      const mockResult = {
-        skills: [
-          "JavaScript", "React", "TypeScript", "Node.js", "Python",
-          "AWS", "Docker", "Git", "MongoDB", "PostgreSQL"
-        ],
-        experience: "5+ years",
-        education: "Bachelor's in Computer Science",
-        roles: ["Full Stack Developer", "Frontend Developer", "Software Engineer"],
-        locations: ["Remote", "San Francisco", "New York"],
-        summary: "Experienced full-stack developer with expertise in modern web technologies and cloud platforms."
+      // Update progress as we parse
+      setProgress(20)
+      
+      // Parse the resume using our service
+      const parsedContent = await resumeParsingService.parseResume(file)
+      setProgress(60)
+      
+      // Create profile from parsed content
+      const profileUpdates = resumeParsingService.createProfileFromResume(parsedContent)
+      setProgress(80)
+      
+      // Update the global store
+      if (profile) {
+        updateProfile({
+          ...profileUpdates,
+          resumeFile: file
+        })
+      } else {
+        setProfile({
+          id: `user_${Date.now()}`,
+          skills: [],
+          experience: '',
+          education: [],
+          preferredRoles: [],
+          preferredLocations: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...profileUpdates,
+          resumeFile: file
+        })
       }
       
       setProgress(100)
-      setAnalysisResult(mockResult)
-      onUploadSuccess?.(mockResult)
+      setAnalysisResult({
+        skills: parsedContent.skills,
+        experience: parsedContent.experience,
+        education: parsedContent.education,
+        contact: parsedContent.contact,
+        sections: Object.keys(parsedContent.sections)
+      })
+      
+      onUploadSuccess?.(parsedContent)
       
       toast({
         title: "Resume analyzed successfully!",
-        description: "Your profile has been updated with extracted information.",
+        description: `Extracted ${parsedContent.skills.length} skills and profile information.`,
       })
+      
     } catch (error) {
+      console.error('Resume upload/parsing error:', error)
       toast({
         title: "Upload failed",
-        description: "There was an error processing your resume.",
+        description: error instanceof Error ? error.message : "There was an error processing your resume.",
         variant: "destructive"
       })
     } finally {
       setUploading(false)
-      clearInterval(progressInterval)
     }
   }
 
@@ -191,9 +209,9 @@ export function ResumeUpload({ onUploadSuccess }: ResumeUploadProps) {
             
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <h4 className="font-medium text-sm">Skills Detected</h4>
+                <h4 className="font-medium text-sm">Skills Detected ({analysisResult.skills?.length || 0})</h4>
                 <div className="flex flex-wrap gap-1">
-                  {analysisResult.skills.slice(0, 6).map((skill: string) => (
+                  {(analysisResult.skills || []).slice(0, 8).map((skill: string) => (
                     <span 
                       key={skill}
                       className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-md"
@@ -201,39 +219,53 @@ export function ResumeUpload({ onUploadSuccess }: ResumeUploadProps) {
                       {skill}
                     </span>
                   ))}
+                  {(analysisResult.skills || []).length > 8 && (
+                    <span className="px-2 py-1 bg-muted text-muted-foreground text-xs rounded-md">
+                      +{analysisResult.skills.length - 8} more
+                    </span>
+                  )}
                 </div>
               </div>
               
               <div className="space-y-2">
-                <h4 className="font-medium text-sm">Experience Level</h4>
-                <p className="text-sm text-muted-foreground">{analysisResult.experience}</p>
+                <h4 className="font-medium text-sm">Contact Information</h4>
+                <div className="text-sm text-muted-foreground space-y-1">
+                  {analysisResult.contact?.name && (
+                    <p>Name: {analysisResult.contact.name}</p>
+                  )}
+                  {analysisResult.contact?.email && (
+                    <p>Email: {analysisResult.contact.email}</p>
+                  )}
+                  {analysisResult.contact?.phone && (
+                    <p>Phone: {analysisResult.contact.phone}</p>
+                  )}
+                </div>
               </div>
               
               <div className="space-y-2">
-                <h4 className="font-medium text-sm">Preferred Roles</h4>
+                <h4 className="font-medium text-sm">Sections Found</h4>
                 <div className="flex flex-wrap gap-1">
-                  {analysisResult.roles.map((role: string) => (
+                  {(analysisResult.sections || []).map((section: string) => (
                     <span 
-                      key={role}
-                      className="px-2 py-1 bg-secondary text-secondary-foreground text-xs rounded-md"
+                      key={section}
+                      className="px-2 py-1 bg-secondary text-secondary-foreground text-xs rounded-md capitalize"
                     >
-                      {role}
+                      {section}
                     </span>
                   ))}
                 </div>
               </div>
               
               <div className="space-y-2">
-                <h4 className="font-medium text-sm">Locations</h4>
-                <div className="flex flex-wrap gap-1">
-                  {analysisResult.locations.map((location: string) => (
-                    <span 
-                      key={location}
-                      className="px-2 py-1 bg-accent text-accent-foreground text-xs rounded-md"
-                    >
-                      {location}
-                    </span>
-                  ))}
+                <h4 className="font-medium text-sm">Education</h4>
+                <div className="text-sm text-muted-foreground">
+                  {analysisResult.education?.length > 0 ? (
+                    analysisResult.education.slice(0, 2).map((edu: string, idx: number) => (
+                      <p key={idx} className="truncate">{edu}</p>
+                    ))
+                  ) : (
+                    <p>Education details extracted</p>
+                  )}
                 </div>
               </div>
             </div>
